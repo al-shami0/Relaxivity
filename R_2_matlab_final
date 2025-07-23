@@ -1,0 +1,174 @@
+% MATLAB Script to Compute and Plot Relaxivity r2 vs Frequency
+
+% Clear workspace and command window
+clear;
+clc;
+
+%% Constants
+mu0 = 4 * pi * 1e-7;           % T·m/A, vacuum permeability
+gamma_H = 42.577e6;            % rad/(T·s), gyromagnetic ratio of proton
+D = 2.3e-9;                    % m^2/s, water self-diffusion coefficient
+N = 3.7e13;                    % 1/m^3, number of particles per unit volume
+R = 5e-9;                      % m, particle radius
+d = 0.7e-9;                    % m, dead layer thickness
+R_m = R - d;                   % m, magnetic core radius
+M_S = 0.52668 / mu0;           % A/m, saturation magnetization converted from T to A/m
+k_B = 1.380649e-23;            % J/K, Boltzmann constant
+T = 300;                       % K, temperature
+eta = 0.005;                   % Pa·s, viscosity of water
+tau0 = 4.5e-11;                % s, attempt time
+Kn = 1.1e5;                    % J/m^3, anisotropy constant (assumed value)
+
+%% Magnetic Moments
+V_m = (4/3) * pi * R_m^3;      % m^3, volume of the magnetic domain
+mu = M_S * V_m;                % A·m^2, magnetic moment
+
+%% External Magnetic Field
+B0 = 1.5;                      % T, typical MRI field strength
+
+%% Compute Magnetic Moment Averages
+[mu_parallel_mean, mu_parallel_mean_squared, mu_parallel_variance, mu_perp_squared_mean] = compute_magnetic_moment_averages(mu, B0, k_B, T);
+
+%% Relaxation Times
+tau_N = tau0 * exp(Kn * V_m / (k_B * T));     % s, Néel relaxation time
+tau_B = (4 * pi * eta * R^3) / (k_B * T);    % s, Brownian relaxation time
+
+% Effective relaxation times (assuming independent processes)
+tau_perp = 1 / (1 / tau_N + 1 / tau_B);      % s, transversal relaxation time
+tau_parallel = tau_B;                        % s, longitudinal relaxation time
+
+%% Sojourn Time
+tau_D = R^2 / D;                              % s
+
+%% Frequency Range: 0.1 MHz to 1000 MHz
+omega_I = linspace(0.1e6 * 2 * pi, 1000e6 * 2 * pi, 1000); % rad/s
+
+%% Precompute Constants
+prefactor = ((mu0 * gamma_H)^2) / (135 * pi) * (N / (D * R));
+
+%% Compute Constant Term C
+x_c_perp = tau_D / tau_perp;
+x_c_parallel = tau_D / tau_parallel;
+
+g_c_perp = g_function(x_c_perp);
+g_c_parallel = g_function(x_c_parallel);
+
+C_transversal = 3 * mu_perp_squared_mean * g_c_perp;
+C_fluctuation = 4 * mu_parallel_variance * g_c_parallel;
+C_curie = 4 * mu_parallel_mean_squared;
+
+C = prefactor * (C_transversal + C_fluctuation + C_curie);
+
+%% Prepare Arrays for Results
+R2 = zeros(size(omega_I));
+transversal_contribution = zeros(size(omega_I));
+curie_term = zeros(size(omega_I));
+fluctuation_term = zeros(size(omega_I));
+
+%% Compute Frequency-Dependent Term V(omega_I)
+for idx = 1:length(omega_I)
+    omega = omega_I(idx);
+    
+    % Compute complex arguments
+    x_v_perp = tau_D * (1i * omega + 1 / tau_perp);
+    x_v_parallel = tau_D * (1i * omega + 1 / tau_parallel);
+    x_v_zero = tau_D * (1i * omega);
+    
+    % Compute g functions
+    g_v_perp = g_function(x_v_perp);
+    g_v_parallel = g_function(x_v_parallel);
+    g_v_zero = g_function(x_v_zero);
+    
+    % Compute V components
+    V_transversal = (7/2) * mu_perp_squared_mean * g_v_perp;
+    V_fluctuation = 3 * mu_parallel_variance * g_v_parallel;
+    V_curie = 3 * mu_parallel_mean_squared * g_v_zero;
+    
+    % Total V
+    V = V_transversal + V_fluctuation + V_curie;
+    
+    % Update R2 and its components
+    R2(idx) = C + prefactor * real(V);
+    transversal_contribution(idx) = prefactor * real(V_transversal);
+    curie_term(idx) = prefactor * real(V_curie);
+    fluctuation_term(idx) = prefactor * real(V_fluctuation);
+end
+
+%% Convert R2 to Relaxivity r2
+V_particle = (4/3) * pi * R^3;                        % m^3, volume of a single particle
+particle_concentration = N * V_particle;             % particles/m^3
+
+% Convert particles/m^3 to mol/L: (particles/m^3) * (1 mol / 6.022e23 particles) * (1 m^3 / 1000 L)
+particle_concentration_mol_L = particle_concentration / 6.022e23 / 1e3; % mol/L
+
+% Avoid division by zero
+particle_concentration_mol_L(particle_concentration_mol_L == 0) = 1e-12;
+
+% Compute relaxivities
+r2 = R2 ./ particle_concentration_mol_L;                   % s^-1·(mol/L)^-1
+transversal_contribution_r = transversal_contribution ./ particle_concentration_mol_L;
+curie_term_r = curie_term ./ particle_concentration_mol_L;
+fluctuation_term_r = fluctuation_term ./ particle_concentration_mol_L;
+
+%% Plotting
+figure('Position', [100, 100, 800, 600]);
+plot(omega_I / (2 * pi * 1e6), r2, 'DisplayName', 'r_2(\omega_I)', 'LineWidth', 2);
+hold on;
+plot(omega_I / (2 * pi * 1e6), transversal_contribution_r, 'DisplayName', 'Transversal Contribution', 'LineStyle', '--');
+plot(omega_I / (2 * pi * 1e6), curie_term_r, 'DisplayName', 'Curie Term', 'LineStyle', '-.');
+plot(omega_I / (2 * pi * 1e6), fluctuation_term_r, 'DisplayName', 'Fluctuation Term', 'LineStyle', ':');
+xlabel('Frequency \omega_I (MHz)', 'FontSize', 14);
+ylabel('r_2 (s^{-1}·(mol/L)^{-1})', 'FontSize', 14);
+title('Relaxivity r_2(\omega_I) and its Contributions vs Frequency', 'FontSize', 16);
+set(gca, 'XScale', 'log');
+legend('FontSize', 12);
+grid on;
+hold off;
+
+%% Helper Functions
+
+function [mu_parallel_mean, mu_parallel_mean_squared, mu_parallel_variance, mu_perp_squared_mean] = compute_magnetic_moment_averages(mu, B0, k_B, T)
+    % Compute the average and variance of the longitudinal and transversal components of the magnetic moment.
+    %
+    % Parameters:
+    %   mu (float): Magnetic moment (A·m^2)
+    %   B0 (float): External magnetic field (T)
+    %   k_B (float): Boltzmann constant (J/K)
+    %   T (float): Temperature (K)
+    %
+    % Returns:
+    %   mu_parallel_mean (float): Mean longitudinal component
+    %   mu_parallel_mean_squared (float): Mean of the squared longitudinal component
+    %   mu_parallel_variance (float): Variance of the longitudinal component
+    %   mu_perp_squared_mean (float): Mean of the squared transversal component
+
+    x = mu * B0 / (k_B * T);
+    
+    % Langevin function: L(x) = coth(x) - 1/x
+    if x ~= 0
+        L = coth(x) - 1/x;
+    else
+        L = 0;
+    end
+    
+    mu_parallel_mean = mu * L;
+    mu_parallel_mean_squared = mu_parallel_mean^2;
+    mu_parallel_squared_mean = mu^2 * ((3 * L) / x - L^2);
+    mu_parallel_variance = mu_parallel_squared_mean - mu_parallel_mean_squared;
+    mu_perp_squared_mean = 0.5 * (mu^2 - mu_parallel_squared_mean);
+end
+
+function g = g_function(x)
+    % Compute the real part of the function g(x) as defined in the theoretical model.
+    %
+    % Parameters:
+    %   x (complex or float): Input value (can be complex)
+    %
+    % Returns:
+    %   g (float): Real part of g(x)
+
+    sqrt_x = sqrt(x);
+    numerator = 1 + sqrt_x / 4;
+    denominator = 1 + sqrt_x + (4 * x) / 9 + (sqrt_x .* x) / 9;
+    g = real(numerator ./ denominator);
+end
