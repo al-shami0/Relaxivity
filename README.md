@@ -1,1 +1,2 @@
 # Relaxivity
+This User Guide provides comprehensive instructions for using a MATLAB script designed to compute and plot the relaxivity r2(ωI) and its contributions as a function of frequency. The script models the relaxation processes in magnetic nanoparticles, considering both N´eel and Brownian relaxation mechanisms, and decomposes the relaxivity into transversal, Curie, and fluctuation contributions.
